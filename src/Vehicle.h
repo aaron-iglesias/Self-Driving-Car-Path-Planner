@@ -4,7 +4,8 @@ class Vehicle {
 private:
 	State state_;
 public:
-	Vehicle();
-	Vehicle(State state);
+	const unsigned int id;
+	Vehicle(const unsigned int v_id);
+	Vehicle(const unsigned int v_id, const State state);
 	State getState() const;
 };

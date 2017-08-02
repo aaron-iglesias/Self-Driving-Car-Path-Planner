@@ -101,22 +101,24 @@ int main() {
 
           	// Sensor Fusion Data, a list of all other cars on the same side of the road.
           	auto sensor_fusion = j[1]["sensor_fusion"];
+          	std::cout << sensor_fusion << "\n\n";          	
 
           	json msgJson;
 
           	// define path made up of (x, y) points that the car will visit sequentially every .02 seconds
           	const int kNumPoints = 20;
-          	const double kDistInc = 0.5;
+          	const double kDistInc = 0.2;
           	const double kPi = 3.1415926535897;
 
           	vector<double> next_x_vals(kNumPoints);
           	vector<double> next_y_vals(kNumPoints);
 
-          	double c1 = 0;
-          	double c2 = car_yaw * kPi / 180;
+          	double c1 = 0, c2 = car_yaw * kPi / 180;
+          	const double kCosCarYaw = cos(c2);
+          	const double kSinCarYaw = sin(c2);
           	for(int i = 0; i < kNumPoints; ++i) {
-          		next_x_vals[i] = car_x + c1 * cos(c2);
-          		next_y_vals[i] = car_y + c1 * sin(c2);
+          		next_x_vals[i] = car_x + c1 * kCosCarYaw;
+          		next_y_vals[i] = car_y + c1 * kSinCarYaw;
           		c1 += kDistInc;
           	}
 
