@@ -16,6 +16,6 @@ void Road::add(const Vehicle v) {
 
 void Road::remove(const Vehicle v) {
 	auto it = vehicles_.begin();
-	if(it == vehicles_.end())
-		return;
+	if(it != vehicles_.end())
+		vehicles_.erase(it);
 }

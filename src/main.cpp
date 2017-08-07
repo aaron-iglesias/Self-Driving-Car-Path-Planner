@@ -41,7 +41,7 @@ int main() {
   // Waypoint map to read from
   string map_file_ = "../data/highway_map.csv";
   // The max s value before wrapping around the track back to 0
-  const double kMaxS = 6945.554;
+  const float kMaxS = 6945.554;
 
   ifstream in_map_(map_file_.c_str(), ifstream::in);
 
@@ -65,7 +65,10 @@ int main() {
   	map_waypoints_dy.push_back(d_y);
   }
 
-  h.onMessage([&map_waypoints_x, &map_waypoints_y, &map_waypoints_s, &map_waypoints_dx, &map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  int waypoint_index = 0;
+
+  std::cout << "BEGIN" << '\n';
+  h.onMessage([&map_waypoints_x, &map_waypoints_y, &map_waypoints_s, &map_waypoints_dx, &map_waypoints_dy, &waypoint_index](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -92,35 +95,58 @@ int main() {
           	double car_yaw = j[1]["yaw"];
           	double car_speed = j[1]["speed"];
 
-          	// Previous path data given to the Planner
-          	auto previous_path_x = j[1]["previous_path_x"];
-          	auto previous_path_y = j[1]["previous_path_y"];
+          	// Leftover of previous path data given to the Planner
+          	vector<double> previous_path_x = j[1]["previous_path_x"];
+          	vector<double> previous_path_y = j[1]["previous_path_y"];
           	// Previous path's end s and d values 
           	double end_path_s = j[1]["end_path_s"];
           	double end_path_d = j[1]["end_path_d"];
 
           	// Sensor Fusion Data, a list of all other cars on the same side of the road.
           	auto sensor_fusion = j[1]["sensor_fusion"];
-          	std::cout << sensor_fusion << "\n\n";          	
+          	// std::cout << sensor_fusion << "\n\n";          	
 
           	json msgJson;
 
-          	// define path made up of (x, y) points that the car will visit sequentially every .02 seconds
-          	const int kNumPoints = 20;
-          	const double kDistInc = 0.2;
-          	const double kPi = 3.1415926535897;
+            // add leftover points of last cycle to next points
+            vector<double> next_x_vals;
+            vector<double> next_y_vals;
 
-          	vector<double> next_x_vals(kNumPoints);
-          	vector<double> next_y_vals(kNumPoints);
+            // find initial points to interpolate to next waypoint
+            double x_first = next_x_vals.empty() ? car_x : next_x_vals.back();
+            double y_first = next_y_vals.empty() ? car_y : next_y_vals.back();
 
-          	double c1 = 0, c2 = car_yaw * kPi / 180;
-          	const double kCosCarYaw = cos(c2);
-          	const double kSinCarYaw = sin(c2);
-          	for(int i = 0; i < kNumPoints; ++i) {
-          		next_x_vals[i] = car_x + c1 * kCosCarYaw;
-          		next_y_vals[i] = car_y + c1 * kSinCarYaw;
-          		c1 += kDistInc;
-          	}
+            // get next waypoint index
+            int closest_wp_i = -1;
+            double closest_dist = std::numeric_limits<double>::max();
+            for(int i = 0; i < map_waypoints_x.size(); ++i) {
+              double x = map_waypoints_x[i];
+              double y = map_waypoints_y[i];
+              double dist = sqrt(pow(x_first - x, 2) + pow(y_first - y, 2));
+              if(dist < closest_dist) {
+                closest_wp_i = i;
+                closest_dist = dist;
+              }
+            }
+            double angle = atan2(map_waypoints_y[closest_wp_i] - y_first, map_waypoints_x[closest_wp_i] - x_first);
+            double car_yaw_rad = car_yaw * M_PI / 180;
+            double theta = angle - car_yaw_rad;
+            if(abs(theta) > M_PI / 4)
+              closest_wp_i = (closest_wp_i + 1) % map_waypoints_x.size();
+            // waypoint for middle lane
+            double shifted_way_point_x = map_waypoints_x[closest_wp_i] + 6 * map_waypoints_dx[closest_wp_i];
+            double shifted_way_point_y = map_waypoints_y[closest_wp_i] + 6 * map_waypoints_dy[closest_wp_i];
+            angle = atan2(shifted_way_point_y - y_first, shifted_way_point_x - x_first);
+
+            // get next x, y values
+            float dist_inc = 0.5;
+            for(int i = 0; i < 10; ++i) {
+              next_x_vals.push_back(car_x + i * dist_inc * cos(angle));
+              next_y_vals.push_back(car_y + i * dist_inc * sin(angle));
+            }
+
+            std::cout << "Car s: " << car_s << '\n';
+            std::cout << "Map s: " << map_waypoints_s[closest_wp_i] << '\n';
 
           	msgJson["next_x"] = next_x_vals;
           	msgJson["next_y"] = next_y_vals;

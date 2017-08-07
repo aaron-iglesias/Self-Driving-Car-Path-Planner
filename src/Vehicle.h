@@ -1,3 +1,6 @@
+#ifndef VEHICLE_H
+#define VEHICLE_H
+
 #include "State.h"
 
 class Vehicle {
@@ -9,3 +12,5 @@ public:
 	Vehicle(const unsigned int v_id, const State state);
 	State getState() const;
 };
+
+#endif
