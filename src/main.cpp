@@ -159,10 +159,15 @@ vector<double> getXY(double s, double d, vector<double> maps_s, vector<double> m
 
 }
 
+// converts mph to distance between points
+double mphToDistInc(double mph) {
+  return 8.94077777777777e-3 * mph;
+}
+
 int main() {
   uWS::Hub h;
 
-  // load map values for waypoint's x, y, s, d normalized normal vectors
+  // Load up map values for waypoint's x,y,s and d normalized normal vectors
   vector<double> map_waypoints_x;
   vector<double> map_waypoints_y;
   vector<double> map_waypoints_s;
@@ -172,40 +177,37 @@ int main() {
   // Waypoint map to read from
   string map_file_ = "../data/highway_map.csv";
   // The max s value before wrapping around the track back to 0
-  const float kMaxS = 6945.554;
+  double max_s = 6945.554;
 
   ifstream in_map_(map_file_.c_str(), ifstream::in);
 
   string line;
   while (getline(in_map_, line)) {
-  	istringstream iss(line);
-  	double x;
-  	double y;
-  	float s;
-  	float d_x;
-  	float d_y;
-  	iss >> x;
-  	iss >> y;
-  	iss >> s;
-  	iss >> d_x;
-  	iss >> d_y;
-  	map_waypoints_x.push_back(x);
-  	map_waypoints_y.push_back(y);
-  	map_waypoints_s.push_back(s);
-  	map_waypoints_dx.push_back(d_x);
-  	map_waypoints_dy.push_back(d_y);
+    istringstream iss(line);
+    double x;
+    double y;
+    float s;
+    float d_x;
+    float d_y;
+    iss >> x;
+    iss >> y;
+    iss >> s;
+    iss >> d_x;
+    iss >> d_y;
+    map_waypoints_x.push_back(x);
+    map_waypoints_y.push_back(y);
+    map_waypoints_s.push_back(s);
+    map_waypoints_dx.push_back(d_x);
+    map_waypoints_dy.push_back(d_y);
   }
 
-  int waypoint_index = 0;
-
-  std::cout << "BEGIN" << '\n';
-  h.onMessage([&map_waypoints_x, &map_waypoints_y, &map_waypoints_s, &map_waypoints_dx, &map_waypoints_dy, &waypoint_index](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
     // The 2 signifies a websocket event
-    // auto sdata = string(data).substr(0, length);
-    // cout << sdata << endl;
+    //auto sdata = string(data).substr(0, length);
+    //cout << sdata << endl;
     if (length && length > 2 && data[0] == '4' && data[1] == '2') {
 
       auto s = hasData(data);
@@ -218,79 +220,46 @@ int main() {
         if (event == "telemetry") {
           // j[1] is the data JSON object
           
-        	// Main car's localization Data
-          	double car_x = j[1]["x"];
-          	double car_y = j[1]["y"];
-          	double car_s = j[1]["s"];
-          	double car_d = j[1]["d"];
-          	double car_yaw = j[1]["yaw"];
-          	double car_speed = j[1]["speed"];
+          // Main car's localization Data
+            double car_x = j[1]["x"];
+            double car_y = j[1]["y"];
+            double car_s = j[1]["s"];
+            double car_d = j[1]["d"];
+            double car_yaw = j[1]["yaw"];
+            double car_speed = j[1]["speed"];
 
-          	// Leftover of previous path data given to the Planner
-          	vector<double> previous_path_x = j[1]["previous_path_x"];
-          	vector<double> previous_path_y = j[1]["previous_path_y"];
-          	// Previous path's end s and d values 
-          	double end_path_s = j[1]["end_path_s"];
-          	double end_path_d = j[1]["end_path_d"];
+            // Previous path data given to the Planner
+            auto previous_path_x = j[1]["previous_path_x"];
+            auto previous_path_y = j[1]["previous_path_y"];
+            // Previous path's end s and d values 
+            double end_path_s = j[1]["end_path_s"];
+            double end_path_d = j[1]["end_path_d"];
 
-          	// Sensor Fusion Data, a list of all other cars on the same side of the road.
-          	auto sensor_fusion = j[1]["sensor_fusion"];
-          	// std::cout << sensor_fusion << "\n\n";          	
+            // Sensor Fusion Data, a list of all other cars on the same side of the road.
+            auto sensor_fusion = j[1]["sensor_fusion"];
 
-          	json msgJson;
+            json msgJson;
 
-            // add leftover points of last cycle to next points
             vector<double> next_x_vals;
             vector<double> next_y_vals;
 
-            // find initial points to interpolate to next waypoint
-            double x_first = next_x_vals.empty() ? car_x : next_x_vals.back();
-            double y_first = next_y_vals.empty() ? car_y : next_y_vals.back();
-
-            // get next waypoint index
-            int closest_wp_i = -1;
-            double closest_dist = std::numeric_limits<double>::max();
-            for(int i = 0; i < map_waypoints_x.size(); ++i) {
-              double x = map_waypoints_x[i];
-              double y = map_waypoints_y[i];
-              double dist = sqrt(pow(x_first - x, 2) + pow(y_first - y, 2));
-              if(dist < closest_dist) {
-                closest_wp_i = i;
-                closest_dist = dist;
-              }
-            }
-            double angle = atan2(map_waypoints_y[closest_wp_i] - y_first, map_waypoints_x[closest_wp_i] - x_first);
-            double car_yaw_rad = car_yaw * M_PI / 180;
-            double theta = angle - car_yaw_rad;
-            if(abs(theta) > M_PI / 4)
-              closest_wp_i = (closest_wp_i + 1) % map_waypoints_x.size();
-            // waypoint for middle lane
-            double shifted_way_point_x = map_waypoints_x[closest_wp_i] + 6 * map_waypoints_dx[closest_wp_i];
-            double shifted_way_point_y = map_waypoints_y[closest_wp_i] + 6 * map_waypoints_dy[closest_wp_i];
-            angle = atan2(shifted_way_point_y - y_first, shifted_way_point_x - x_first);
-
-            
-
-            // get next x, y values
-            float dist_inc = 0.5;
-            for(int i = 0; i < 10; ++i) {
-              next_x_vals.push_back(car_x + i * dist_inc * cos(angle));
-              next_y_vals.push_back(car_y + i * dist_inc * sin(angle));
+            double dist_inc = mphToDistInc(50);
+            double tmp_s = car_s;
+            for(int i = 0; i < 50; ++i) {
+              tmp_s += dist_inc;
+              vector<double> xy = getXY(tmp_s, car_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+              next_x_vals.push_back(xy[0]);
+              next_y_vals.push_back(xy[1]);
             }
 
-            std::cout << "Car s: " << car_s << '\n';
-            std::cout << "Map s: " << map_waypoints_s[closest_wp_i] << '\n';
-            std::cout << "Current Path Length: " << next_x_vals.size() << '\n';
-            std::cout << "Previous Path Length: " << previous_path_x.size() << '\n';
-            std::cout << '\n';
+            // define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
+            msgJson["next_x"] = next_x_vals;
+            msgJson["next_y"] = next_y_vals;
 
-          	msgJson["next_x"] = next_x_vals;
-          	msgJson["next_y"] = next_y_vals;
+            auto msg = "42[\"control\","+ msgJson.dump()+"]";
 
-          	auto msg = "42[\"control\","+ msgJson.dump()+"]";
-
-          	//this_thread::sleep_for(chrono::milliseconds(1000));
-          	ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
+            //this_thread::sleep_for(chrono::milliseconds(1000));
+            ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
           
         }
       } else {
@@ -301,7 +270,9 @@ int main() {
     }
   });
 
-  // We don't need this since we're not using HTTP but program won't compile without this
+  // We don't need this since we're not using HTTP but if it's removed the
+  // program
+  // doesn't compile :-(
   h.onHttpRequest([](uWS::HttpResponse *res, uWS::HttpRequest req, char *data,
                      size_t, size_t) {
     const std::string s = "<h1>Hello world!</h1>";
