@@ -1,4 +1,5 @@
 #include <fstream>
+#include <string>
 #include <math.h>
 #include <uWS/uWS.h>
 #include <chrono>
@@ -8,6 +9,8 @@
 #include "Eigen-3.3/Eigen/Core"
 #include "Eigen-3.3/Eigen/QR"
 #include "json.hpp"
+#include "spline.h"
+#include <algorithm>
 
 using namespace std;
 
@@ -156,12 +159,70 @@ vector<double> getXY(double s, double d, vector<double> maps_s, vector<double> m
   double y = seg_y + d*sin(perp_heading);
 
   return {x,y};
+}
 
+// TODO: check x_global.size() == y_global.size()
+vector< vector<double> > globalToLocal(vector<double> x_global, vector<double> y_global, double car_x, double car_y, double car_yaw) {
+  vector<double> x_local(x_global.size());
+  vector<double> y_local(y_global.size());
+
+  for(int i = 0; i < x_local.size(); ++i) {
+    double x_scale = x_global[i] - car_x;
+    double y_scale = y_global[i] - car_y;
+    double r = sqrt(pow(x_scale, 2) + pow(y_scale, 2));
+    double theta = atan2(y_scale, x_scale) - car_yaw;
+
+    x_local[i] = r * cos(theta);
+    y_local[i] = r * sin(theta);
+    // std::cout << x_local[i] << std::endl;
+  }
+
+  return {x_local, y_local};
+}
+
+// TODO: check x_local.size() == y_local.size()
+vector< vector<double > > localToGlobal(vector<double> x_local, vector<double> y_local, double car_x, double car_y, double car_yaw) {
+  vector<double> x_global(x_local.size());
+  vector<double> y_global(y_local.size());
+
+  for(int i = 0; i < x_global.size(); ++i) {
+    double r = sqrt(pow(x_local[i], 2) + pow(y_local[i], 2));
+    double theta = atan2(y_local[i], x_local[i]) + car_yaw;
+    x_global[i] = r * cos(theta) + car_x;
+    y_global[i] = r * sin(theta) + car_y;
+  }
+
+  return {x_global, y_global};
 }
 
 // converts mph to distance between points
 double mphToDistInc(double mph) {
   return 8.94077777777777e-3 * mph;
+}
+
+double min(double a, double b) {
+  return a < b ? a : b;
+}
+
+// converts Lane to d Frenet coordinate
+int LaneToD(char lane) {
+  if(lane == 'l')
+    return 2;
+  if(lane == 'm')
+    return 6;
+  if(lane == 'r')
+    return 10;
+  return -1;
+}
+
+void print(const vector<double> &v) {
+  if(v.empty())
+    return;
+  std::cout << '[';
+  for(int i = 0; i < v.size() - 1; ++i) {
+    std::cout << v[i] << ", ";
+  }
+  std::cout << v.back() << ']' << '\n';
 }
 
 int main() {
@@ -229,8 +290,8 @@ int main() {
             double car_speed = j[1]["speed"];
 
             // Previous path data given to the Planner
-            auto previous_path_x = j[1]["previous_path_x"];
-            auto previous_path_y = j[1]["previous_path_y"];
+            vector<double> previous_path_x = j[1]["previous_path_x"];
+            vector<double> previous_path_y = j[1]["previous_path_y"];
             // Previous path's end s and d values 
             double end_path_s = j[1]["end_path_s"];
             double end_path_d = j[1]["end_path_d"];
@@ -240,17 +301,52 @@ int main() {
 
             json msgJson;
 
-            vector<double> next_x_vals;
-            vector<double> next_y_vals;
+            vector<double> spline_x;
+            vector<double> spline_y;
 
-            double dist_inc = mphToDistInc(50);
-            double tmp_s = car_s;
-            for(int i = 0; i < 50; ++i) {
-              tmp_s += dist_inc;
-              vector<double> xy = getXY(tmp_s, car_d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
-              next_x_vals.push_back(xy[0]);
-              next_y_vals.push_back(xy[1]);
+            double s = car_s;
+            double inc = 30;
+            for(int i = 0; i < 3; ++i) {
+              s += inc;
+              vector<double> xy = getXY(s, 6, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+              spline_x.push_back(xy[0]);
+              spline_y.push_back(xy[1]);
             }
+
+            vector< vector<double> > spline_local = globalToLocal(spline_x, spline_y, car_x, car_y, car_yaw * M_PI / 180);
+            vector<double> spline_x_local = {-0.5, 0};
+            spline_x_local.insert(spline_x_local.end(), spline_local[0].begin(), spline_local[0].end());
+            vector<double> spline_y_local = {0, 0};
+            spline_y_local.insert(spline_y_local.end(), spline_local[1].begin(), spline_local[1].end());
+            print(spline_x_local);
+            std::cout << car_d << '\n';
+
+            // TEST
+            // vector< vector<double> > xy_global = localToGlobal(spline_x_local, spline_y_local, car_x, car_y, car_yaw * M_PI/ 180);
+            // spline_x = xy_global[0];
+            // spline_y = xy_global[1];
+
+            tk::spline sp;
+            sp.set_points(spline_x_local, spline_y_local);
+
+            vector<double> next_x_vals(previous_path_x);
+            vector<double> next_y_vals(previous_path_y);
+            double dist_inc = mphToDistInc(40);
+            s = previous_path_x.empty() ? car_s : getFrenet(previous_path_x.back(), previous_path_y.back(), car_yaw, map_waypoints_x, map_waypoints_y)[0];
+            for(int i = 0; i < 10 - next_x_vals.size(); ++i) {
+              s += dist_inc;
+              vector<double> xy = getXY(s, 6, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+              auto xy2 = globalToLocal({xy[0]}, {xy[1]}, car_x, car_y, car_yaw * M_PI / 180);
+
+              double next_x_val = xy2[0][0];
+              double next_y_val = sp(next_x_val);
+              next_x_vals.push_back(next_x_val);
+              next_y_vals.push_back(next_y_val);
+            }
+
+            vector< vector<double> > xy_global = localToGlobal(next_x_vals, next_y_vals, car_x, car_y, car_yaw * M_PI/ 180);
+            next_x_vals = xy_global[0];
+            next_y_vals = xy_global[1];
 
             // define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
             msgJson["next_x"] = next_x_vals;
