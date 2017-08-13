@@ -38,11 +38,11 @@ string hasData(string s) {
   return "";
 }
 
-double distance(double x1, double y1, double x2, double y2)
+double distance(const double &x1, const double &y1, const double &x2, const double &y2)
 {
   return sqrt((x2-x1)*(x2-x1)+(y2-y1)*(y2-y1));
 }
-int ClosestWaypoint(double x, double y, vector<double> maps_x, vector<double> maps_y)
+int ClosestWaypoint(const double &x, const double &y, const vector<double> &maps_x, const vector<double> &maps_y)
 {
 
   double closestLen = 100000; //large number
@@ -65,7 +65,7 @@ int ClosestWaypoint(double x, double y, vector<double> maps_x, vector<double> ma
 
 }
 
-int NextWaypoint(double x, double y, double theta, vector<double> maps_x, vector<double> maps_y)
+int NextWaypoint(const double &x, const double &y, const double &theta, const vector<double> &maps_x, const vector<double> &maps_y)
 {
 
   int closestWaypoint = ClosestWaypoint(x,y,maps_x,maps_y);
@@ -87,7 +87,7 @@ int NextWaypoint(double x, double y, double theta, vector<double> maps_x, vector
 }
 
 // Transform from Cartesian x,y coordinates to Frenet s,d coordinates
-vector<double> getFrenet(double x, double y, double theta, vector<double> maps_x, vector<double> maps_y)
+vector<double> getFrenet(const double &x, const double &y, const double &theta, const vector<double> &maps_x, const vector<double> &maps_y)
 {
   int next_wp = NextWaypoint(x,y, theta, maps_x,maps_y);
 
@@ -136,7 +136,7 @@ vector<double> getFrenet(double x, double y, double theta, vector<double> maps_x
 }
 
 // Transform from Frenet s,d coordinates to Cartesian x,y
-vector<double> getXY(double s, double d, vector<double> maps_s, vector<double> maps_x, vector<double> maps_y)
+vector<double> getXY(const double &s, const double &d, const vector<double> &maps_s, const vector<double> &maps_x, const vector<double> &maps_y)
 {
   int prev_wp = -1;
 
@@ -163,7 +163,7 @@ vector<double> getXY(double s, double d, vector<double> maps_s, vector<double> m
 }
 
 // TODO: check x_global.size() == y_global.size()
-vector< vector<double> > globalToLocal(vector<double> x_global, vector<double> y_global, double car_x, double car_y, double car_yaw) {
+vector< vector<double> > globalToLocal(const vector<double> &x_global, const vector<double> &y_global, const double &car_x, const double &car_y, const double &car_yaw) {
   vector<double> x_local(x_global.size());
   vector<double> y_local(y_global.size());
 
@@ -182,7 +182,7 @@ vector< vector<double> > globalToLocal(vector<double> x_global, vector<double> y
 }
 
 // TODO: check x_local.size() == y_local.size()
-vector< vector<double > > localToGlobal(vector<double> x_local, vector<double> y_local, double car_x, double car_y, double car_yaw) {
+vector< vector<double > > localToGlobal(const vector<double> &x_local, const vector<double> &y_local, const double &car_x, const double &car_y, const double &car_yaw) {
   vector<double> x_global(x_local.size());
   vector<double> y_global(y_local.size());
 
@@ -197,16 +197,16 @@ vector< vector<double > > localToGlobal(vector<double> x_local, vector<double> y
 }
 
 // converts mph to distance between points
-double mphToDistInc(double mph) {
+double mphToDistInc(const double &mph) {
   return 8.94077777777777e-3 * mph;
 }
 
-double min(double a, double b) {
+double min(const double &a, const double &b) {
   return a < b ? a : b;
 }
 
 // converts Lane to d Frenet coordinate
-int LaneToD(char lane) {
+int LaneToD(const char &lane) {
   if(lane == 'l')
     return 2;
   if(lane == 'm')
@@ -309,8 +309,6 @@ int main() {
             spline_x_local.insert(spline_x_local.end(), spline_local[0].begin(), spline_local[0].end());
             vector<double> spline_y_local = {0, 0};
             spline_y_local.insert(spline_y_local.end(), spline_local[1].begin(), spline_local[1].end());
-            print(spline_x_local);
-            std::cout << car_d << '\n';
 
             // TEST
             // vector< vector<double> > xy_global = localToGlobal(spline_x_local, spline_y_local, car_x, car_y, car_yaw * M_PI/ 180);
@@ -323,7 +321,7 @@ int main() {
             vector<double> next_x_vals(previous_path_x);
             vector<double> next_y_vals(previous_path_y);
             double dist_inc = mphToDistInc(40);
-            // s = previous_path_x.empty() ? car_s : getFrenet(previous_path_x.back(), previous_path_y.back(), car_yaw, map_waypoints_x, map_waypoints_y)[0];
+            //s = previous_path_x.empty() ? car_s : getFrenet(previous_path_x.back(), previous_path_y.back(), car_yaw, map_waypoints_x, map_waypoints_y)[0];
             s = car_s;
             for(int i = 0; i < 10 - next_x_vals.size(); ++i) {
               s += dist_inc;
