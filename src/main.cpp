@@ -11,6 +11,7 @@
 #include "json.hpp"
 #include "spline.h"
 #include <algorithm>
+#include "print.h"
 
 using namespace std;
 
@@ -215,16 +216,6 @@ int LaneToD(char lane) {
   return -1;
 }
 
-void print(const vector<double> &v) {
-  if(v.empty())
-    return;
-  std::cout << '[';
-  for(int i = 0; i < v.size() - 1; ++i) {
-    std::cout << v[i] << ", ";
-  }
-  std::cout << v.back() << ']' << '\n';
-}
-
 int main() {
   uWS::Hub h;
 
@@ -332,7 +323,8 @@ int main() {
             vector<double> next_x_vals(previous_path_x);
             vector<double> next_y_vals(previous_path_y);
             double dist_inc = mphToDistInc(40);
-            s = previous_path_x.empty() ? car_s : getFrenet(previous_path_x.back(), previous_path_y.back(), car_yaw, map_waypoints_x, map_waypoints_y)[0];
+            // s = previous_path_x.empty() ? car_s : getFrenet(previous_path_x.back(), previous_path_y.back(), car_yaw, map_waypoints_x, map_waypoints_y)[0];
+            s = car_s;
             for(int i = 0; i < 10 - next_x_vals.size(); ++i) {
               s += dist_inc;
               vector<double> xy = getXY(s, 6, map_waypoints_s, map_waypoints_x, map_waypoints_y);
