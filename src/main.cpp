@@ -278,6 +278,7 @@ int main() {
             double car_s = j[1]["s"];
             double car_d = j[1]["d"];
             double car_yaw = j[1]["yaw"];
+            double car_yaw_rad = car_yaw * M_PI / 180;
             double car_speed = j[1]["speed"];
 
             // Previous path data given to the Planner
@@ -295,8 +296,9 @@ int main() {
             vector<double> spline_x;
             vector<double> spline_y;
 
+            // create spline points
             double s = car_s;
-            double inc = 30;
+            short inc = 10;
             for(int i = 0; i < 3; ++i) {
               s += inc;
               vector<double> xy = getXY(s, 6, map_waypoints_s, map_waypoints_x, map_waypoints_y);
@@ -304,29 +306,25 @@ int main() {
               spline_y.push_back(xy[1]);
             }
 
-            vector< vector<double> > spline_local = globalToLocal(spline_x, spline_y, car_x, car_y, car_yaw * M_PI / 180);
+            // set spline points
+            vector< vector<double> > spline_local = globalToLocal(spline_x, spline_y, car_x, car_y, car_yaw_rad);
             vector<double> spline_x_local = {-0.5, 0};
             spline_x_local.insert(spline_x_local.end(), spline_local[0].begin(), spline_local[0].end());
             vector<double> spline_y_local = {0, 0};
             spline_y_local.insert(spline_y_local.end(), spline_local[1].begin(), spline_local[1].end());
-
-            // TEST
-            // vector< vector<double> > xy_global = localToGlobal(spline_x_local, spline_y_local, car_x, car_y, car_yaw * M_PI/ 180);
-            // spline_x = xy_global[0];
-            // spline_y = xy_global[1];
-
             tk::spline sp;
             sp.set_points(spline_x_local, spline_y_local);
 
+            // sample spline points
             vector<double> next_x_vals(previous_path_x);
             vector<double> next_y_vals(previous_path_y);
             double dist_inc = mphToDistInc(40);
-            //s = previous_path_x.empty() ? car_s : getFrenet(previous_path_x.back(), previous_path_y.back(), car_yaw, map_waypoints_x, map_waypoints_y)[0];
+            //s = previous_path_x.empty() ? car_s : getFrenet(previous_path_x.back(), previous_path_y.back(), car_yaw_rad, map_waypoints_x, map_waypoints_y)[0];
             s = car_s;
             for(int i = 0; i < 10 - next_x_vals.size(); ++i) {
               s += dist_inc;
               vector<double> xy = getXY(s, 6, map_waypoints_s, map_waypoints_x, map_waypoints_y);
-              auto xy2 = globalToLocal({xy[0]}, {xy[1]}, car_x, car_y, car_yaw * M_PI / 180);
+              auto xy2 = globalToLocal({xy[0]}, {xy[1]}, car_x, car_y, car_yaw_rad);
 
               double next_x_val = xy2[0][0];
               double next_y_val = sp(next_x_val);
@@ -334,7 +332,8 @@ int main() {
               next_y_vals.push_back(next_y_val);
             }
 
-            vector< vector<double> > xy_global = localToGlobal(next_x_vals, next_y_vals, car_x, car_y, car_yaw * M_PI/ 180);
+            // convert spline points from local to global coordinates
+            vector< vector<double> > xy_global = localToGlobal(next_x_vals, next_y_vals, car_x, car_y, car_yaw_rad);
             next_x_vals = xy_global[0];
             next_y_vals = xy_global[1];
 
