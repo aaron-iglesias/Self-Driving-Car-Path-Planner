@@ -230,6 +230,7 @@ int main() {
   string map_file_ = "../data/highway_map.csv";
   // The max s value before wrapping around the track back to 0
   double max_s = 6945.554;
+  double yaw_end = 1;
 
   ifstream in_map_(map_file_.c_str(), ifstream::in);
 
@@ -253,7 +254,7 @@ int main() {
     map_waypoints_dy.push_back(d_y);
   }
 
-  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy,&yaw_end,&max_s](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -293,49 +294,53 @@ int main() {
 
             json msgJson;
 
-            vector<double> spline_x;
-            vector<double> spline_y;
+            // set constants
+            const unsigned int d = 6;
+            const unsigned int num_spline_points = 5;
+            const unsigned int spline_point_dist = 30;
+            const unsigned int num_waypoints = 20;
+            const double waypoint_dist = 0.4;
 
             // create spline points
-            double s = car_s;
-            short inc = 10;
-            for(int i = 0; i < 3; ++i) {
-              s += inc;
-              vector<double> xy = getXY(s, 6, map_waypoints_s, map_waypoints_x, map_waypoints_y);
-              spline_x.push_back(xy[0]);
-              spline_y.push_back(xy[1]);
+            double s_start = car_s - spline_point_dist;
+            if(s_start < 0)
+              s_start += max_s + 1;
+            vector<double> spline_points(num_spline_points);
+            for(int i = 0; i < num_spline_points; ++i) {
+              spline_points[i] = s_start;
+              s_start += spline_point_dist;
+              if(s_start > max_s) {
+                s_start -= max_s;
+              }
             }
 
             // set spline points
-            vector< vector<double> > spline_local = globalToLocal(spline_x, spline_y, car_x, car_y, car_yaw_rad);
-            vector<double> spline_x_local = {-0.5, 0};
-            spline_x_local.insert(spline_x_local.end(), spline_local[0].begin(), spline_local[0].end());
-            vector<double> spline_y_local = {0, 0};
-            spline_y_local.insert(spline_y_local.end(), spline_local[1].begin(), spline_local[1].end());
+            vector<double> x_global(num_spline_points), y_global(num_spline_points);
+            for(int i = 0; i < num_spline_points; ++i) {
+              vector<double> xy_global = getXY(spline_points[i], d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+              x_global[i] = xy_global[0];
+              y_global[i] = xy_global[1];
+            }
+            vector< vector<double> > xy_local = globalToLocal(x_global, y_global, car_x, car_y, car_yaw_rad);
             tk::spline sp;
-            sp.set_points(spline_x_local, spline_y_local);
+            xy_local[0][0] = -0.5;
+            xy_local[1][0] = 0;
+            xy_local[0][1] = 0;
+            xy_local[1][1] = 0;
+            sp.set_points(xy_local[0], xy_local[1]);
 
             // sample spline points
-            vector<double> next_x_vals(previous_path_x);
-            vector<double> next_y_vals(previous_path_y);
-            double dist_inc = mphToDistInc(40);
-            //s = previous_path_x.empty() ? car_s : getFrenet(previous_path_x.back(), previous_path_y.back(), car_yaw_rad, map_waypoints_x, map_waypoints_y)[0];
-            s = car_s;
-            for(int i = 0; i < 10 - next_x_vals.size(); ++i) {
-              s += dist_inc;
-              vector<double> xy = getXY(s, 6, map_waypoints_s, map_waypoints_x, map_waypoints_y);
-              auto xy2 = globalToLocal({xy[0]}, {xy[1]}, car_x, car_y, car_yaw_rad);
-
-              double next_x_val = xy2[0][0];
-              double next_y_val = sp(next_x_val);
-              next_x_vals.push_back(next_x_val);
-              next_y_vals.push_back(next_y_val);
+            vector<double> next_x_vals(num_waypoints), next_y_vals(num_waypoints);
+            double x_start = waypoint_dist;
+            for(int i = 0; i < num_waypoints; ++i) {
+              double y = sp(x_start);
+              next_x_vals[i] = x_start;
+              next_y_vals[i] = y;
+              x_start += waypoint_dist;
             }
-
-            // convert spline points from local to global coordinates
-            vector< vector<double> > xy_global = localToGlobal(next_x_vals, next_y_vals, car_x, car_y, car_yaw_rad);
-            next_x_vals = xy_global[0];
-            next_y_vals = xy_global[1];
+            vector< vector<double> > next_xy_vals = localToGlobal(next_x_vals, next_y_vals, car_x, car_y, car_yaw_rad);
+            next_x_vals = next_xy_vals[0];
+            next_y_vals = next_xy_vals[1];
 
             // define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
             msgJson["next_x"] = next_x_vals;
