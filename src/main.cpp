@@ -279,7 +279,6 @@ int main() {
             double car_s = j[1]["s"];
             double car_d = j[1]["d"];
             double car_yaw = j[1]["yaw"];
-            double car_yaw_rad = car_yaw * M_PI / 180;
             double car_speed = j[1]["speed"];
 
             // Previous path data given to the Planner
@@ -299,48 +298,91 @@ int main() {
             const unsigned int num_spline_points = 5;
             const unsigned int spline_point_dist = 30;
             const unsigned int num_waypoints = 20;
-            const double waypoint_dist = 0.4;
+            const double dist_inc = 0.3;
+            const int lane = 1;
+            const double ref_vel = 49.5;
 
-            // create spline points
-            double s_start = car_s - spline_point_dist;
-            if(s_start < 0)
-              s_start += max_s + 1;
-            vector<double> spline_points(num_spline_points);
-            for(int i = 0; i < num_spline_points; ++i) {
-              spline_points[i] = s_start;
-              s_start += spline_point_dist;
-              if(s_start > max_s) {
-                s_start -= max_s;
-              }
+            vector<double> ptsx, ptsy;
+
+            double ref_x = car_x;
+            double ref_y = car_y;
+            double ref_yaw = deg2rad(car_yaw);
+
+            int prev_size = previous_path_x.size();
+            if(prev_size < 2) {
+              // use two points that make the path tangent to the car
+              double prev_car_x = car_x - cos(car_yaw);
+              double prev_car_y = car_y - sin(car_yaw);
+
+              ptsx.push_back(prev_car_x);
+              ptsx.push_back(car_x);
+
+              ptsy.push_back(prev_car_y);
+              ptsy.push_back(car_y);
+            }
+            // use the previous path's end point as starting reference
+            else {
+              // redefine reference state as previous path end point
+              ref_x = previous_path_x[prev_size - 1];
+              ref_y = previous_path_y[prev_size - 1];
+
+              double ref_x_prev = previous_path_x[prev_size - 2];
+              double ref_y_prev = previous_path_y[prev_size - 2];
+              ref_yaw = atan2(ref_y - ref_y_prev, ref_x - ref_x_prev);
+
+              // use two points that make the path tangent to the previous path's end point
+              ptsx.push_back(ref_x_prev);
+              ptsx.push_back(ref_x);
+
+              ptsy.push_back(ref_y_prev);
+              ptsy.push_back(ref_y);
             }
 
-            // set spline points
-            vector<double> x_global(num_spline_points), y_global(num_spline_points);
-            for(int i = 0; i < num_spline_points; ++i) {
-              vector<double> xy_global = getXY(spline_points[i], d, map_waypoints_s, map_waypoints_x, map_waypoints_y);
-              x_global[i] = xy_global[0];
-              y_global[i] = xy_global[1];
+            // in Frenet add evenly 30m spaced points ahead of the starting reference
+            for(int i = 0; i < num_spline_points - ptsx.size(); ++i) {
+              vector<double> next_wp = getXY(car_s + (i + 1) * spline_point_dist, 2 + 4 * lane, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+              ptsx.push_back(next_wp[0]);
+              ptsy.push_back(next_wp[1]);
             }
-            vector< vector<double> > xy_local = globalToLocal(x_global, y_global, car_x, car_y, car_yaw_rad);
-            tk::spline sp;
-            xy_local[0][0] = -0.5;
-            xy_local[1][0] = 0;
-            xy_local[0][1] = 0;
-            xy_local[1][1] = 0;
-            sp.set_points(xy_local[0], xy_local[1]);
 
-            // sample spline points
-            vector<double> next_x_vals(num_waypoints), next_y_vals(num_waypoints);
-            double x_start = waypoint_dist;
-            for(int i = 0; i < num_waypoints; ++i) {
-              double y = sp(x_start);
-              next_x_vals[i] = x_start;
-              next_y_vals[i] = y;
-              x_start += waypoint_dist;
+            // convert global to local coordinates
+            vector< vector<double> > pts_local = globalToLocal(ptsx, ptsy, ref_x, ref_y, ref_yaw);
+            ptsx = pts_local[0];
+            ptsy = pts_local[1];
+
+            // set points to spline
+            tk::spline s;
+            s.set_points(ptsx, ptsy);
+
+            // add previous points to current points for planner
+            vector<double> next_x_vals(previous_path_x);
+            vector<double> next_y_vals(previous_path_y);
+
+            double target_x = 30;
+            double target_y = s(target_x);
+            double target_dist = sqrt((target_x)*(target_x)+(target_y)*(target_y));
+
+            double x_add_on = 0;
+
+            for(int i = 1; i <= 50 - previous_path_x.size(); ++i) {
+              double N = target_dist / (.02 * ref_vel / 2.24);
+              double x_point = x_add_on + target_x / N;
+              double y_point = s(x_point);
+
+              x_add_on = x_point;
+
+              double x_ref = x_point;
+              double y_ref = y_point;
+
+              x_point = x_ref * cos(ref_yaw) - y_ref * sin(ref_yaw);
+              y_point = x_ref * sin(ref_yaw) + y_ref * cos(ref_yaw);
+
+              x_point += ref_x;
+              y_point += ref_y;
+
+              next_x_vals.push_back(x_point);
+              next_y_vals.push_back(y_point);
             }
-            vector< vector<double> > next_xy_vals = localToGlobal(next_x_vals, next_y_vals, car_x, car_y, car_yaw_rad);
-            next_x_vals = next_xy_vals[0];
-            next_y_vals = next_xy_vals[1];
 
             // define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
             msgJson["next_x"] = next_x_vals;
