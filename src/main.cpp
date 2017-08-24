@@ -18,10 +18,19 @@ using namespace std;
 // for convenience
 using json = nlohmann::json;
 
+// define constants
+const unsigned int d = 6;
+const unsigned int num_spline_points = 5;
+const unsigned int spline_point_dist = 30;
+const unsigned int num_waypoints = 50;
+const double dist_inc = 0.3;
+const int lane = 1;
+const double speed_limit = 50;
+
 // For converting back and forth between radians and degrees.
 constexpr double pi() { return M_PI; }
-double deg2rad(double x) { return x * pi() / 180; }
-double rad2deg(double x) { return x * 180 / pi(); }
+double degToRad(double x) { return x * pi() / 180; }
+double radToDeg(double x) { return x * 180 / pi(); }
 
 // Checks if the SocketIO event has JSON data.
 // If there is data the JSON object in string format will be returned,
@@ -254,7 +263,9 @@ int main() {
     map_waypoints_dy.push_back(d_y);
   }
 
-  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy,&yaw_end,&max_s](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  double ref_vel = 0;
+
+  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy,&yaw_end,&max_s,&ref_vel](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -281,6 +292,8 @@ int main() {
             double car_yaw = j[1]["yaw"];
             double car_speed = j[1]["speed"];
 
+            print(car_s);
+
             // Previous path data given to the Planner
             vector<double> previous_path_x = j[1]["previous_path_x"];
             vector<double> previous_path_y = j[1]["previous_path_y"];
@@ -289,24 +302,28 @@ int main() {
             double end_path_d = j[1]["end_path_d"];
 
             // Sensor Fusion Data, a list of all other cars on the same side of the road.
-            auto sensor_fusion = j[1]["sensor_fusion"];
+            vector< vector<double> >  sensor_fusion = j[1]["sensor_fusion"];
+            double id_closest = -1;
+            double s_closest = max_s + 1;
+            double near_end = car_s > max_s - 100;
+            for(vector<double> &v : sensor_fusion) {
+              bool in_front = near_end && v[5] < 100 ? v[5] + max_s > car_s : v[5] > car_s;
+              int lane_num = (int)car_d / 4;
+              bool same_lane = v[6] >= 4 * lane_num && v[6] <= 4 * lane_num + 4;
+              bool is_closest = v[5] < s_closest;
+              if(in_front && same_lane && is_closest) {
+                id_closest = v[0];
+                s_closest = v[5];
+              } 
+            }
 
             json msgJson;
-
-            // set constants
-            const unsigned int d = 6;
-            const unsigned int num_spline_points = 5;
-            const unsigned int spline_point_dist = 30;
-            const unsigned int num_waypoints = 20;
-            const double dist_inc = 0.3;
-            const int lane = 1;
-            const double ref_vel = 49.5;
 
             vector<double> ptsx, ptsy;
 
             double ref_x = car_x;
             double ref_y = car_y;
-            double ref_yaw = deg2rad(car_yaw);
+            double ref_yaw = degToRad(car_yaw);
 
             int prev_size = previous_path_x.size();
             if(prev_size < 2) {
@@ -338,9 +355,9 @@ int main() {
               ptsy.push_back(ref_y);
             }
 
-            // in Frenet add evenly 30m spaced points ahead of the starting reference
-            for(int i = 0; i < num_spline_points - ptsx.size(); ++i) {
-              vector<double> next_wp = getXY(car_s + (i + 1) * spline_point_dist, 2 + 4 * lane, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+            // create points for spline
+            for(int i = ptsx.size(), j = 1; i < num_spline_points; ++i, ++j) {
+              vector<double> next_wp = getXY(car_s + j * spline_point_dist, 2 + 4 * lane, map_waypoints_s, map_waypoints_x, map_waypoints_y);
               ptsx.push_back(next_wp[0]);
               ptsy.push_back(next_wp[1]);
             }
@@ -358,31 +375,41 @@ int main() {
             vector<double> next_x_vals(previous_path_x);
             vector<double> next_y_vals(previous_path_y);
 
-            double target_x = 30;
-            double target_y = s(target_x);
-            double target_dist = sqrt((target_x)*(target_x)+(target_y)*(target_y));
-
+            // sample spline
             double x_add_on = 0;
+            for(int i = prev_size, j = 0; i < num_waypoints; ++i) {
+              bool going_slower = false;
+              bool too_close = false;
+              if(id_closest != -1) {
+                going_slower = sqrt(pow(sensor_fusion[id_closest][3], 2) + pow(sensor_fusion[id_closest][4], 2)) < ref_vel;
+                too_close = distance(next_x_vals.back(), next_y_vals.back(), sensor_fusion[id_closest][1], sensor_fusion[id_closest][2]) < 10;
+              }
+              bool slow_down = going_slower && too_close;
 
-            for(int i = 1; i <= 50 - previous_path_x.size(); ++i) {
-              double N = target_dist / (.02 * ref_vel / 2.24);
-              double x_point = x_add_on + target_x / N;
+              ref_vel = slow_down ? ref_vel - 0.4 : min(ref_vel + 0.4, speed_limit - 0.3);
+              double x_point = x_add_on + mphToDistInc(ref_vel);
               double y_point = s(x_point);
 
               x_add_on = x_point;
 
+              // center reference
               double x_ref = x_point;
               double y_ref = y_point;
 
+              // // local to global coordinates
               x_point = x_ref * cos(ref_yaw) - y_ref * sin(ref_yaw);
               y_point = x_ref * sin(ref_yaw) + y_ref * cos(ref_yaw);
-
               x_point += ref_x;
               y_point += ref_y;
 
               next_x_vals.push_back(x_point);
               next_y_vals.push_back(y_point);
             }
+
+            // convert local to global coordinates
+            // vector< vector<double> > pts_global = localToGlobal(next_x_vals, next_y_vals, ref_x, ref_y, ref_yaw);
+            // next_x_vals = pts_global[0];
+            // next_y_vals = pts_global[1];
 
             // define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
             msgJson["next_x"] = next_x_vals;
