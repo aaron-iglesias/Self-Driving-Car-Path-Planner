@@ -47,10 +47,10 @@ string hasData(string s) {
   return "";
 }
 
-double distance(const double &x1, const double &y1, const double &x2, const double &y2)
-{
-  return sqrt((x2-x1)*(x2-x1)+(y2-y1)*(y2-y1));
+double distance(const double &x1, const double &y1, const double &x2, const double &y2) {
+  return sqrt(pow(x2 - x1, 2) + pow(y2 - y1, 2));
 }
+
 int ClosestWaypoint(const double &x, const double &y, const vector<double> &maps_x, const vector<double> &maps_y)
 {
 
@@ -225,6 +225,45 @@ int LaneToD(const char &lane) {
   return -1;
 }
 
+// uses sensor fusion data to find the closest front and back vehicles for current lane
+vector<int> closestVehicles(const vector< vector<double> > &sensor_fusion, const double &car_x, const double &car_y, const double &car_yaw, const double &car_d) {
+  // get x, y points
+  vector<double> x, y;
+  for(const vector<double> &v : sensor_fusion) {
+    x.push_back(v[1]);
+    y.push_back(v[2]);
+  }
+
+  // convert x, y to local coordinates 
+  vector< vector<double> > xy_local = globalToLocal(x, y, car_x, car_y, car_yaw);
+  vector<double> x_local = xy_local[0];
+  vector<double> y_local = xy_local[1];
+
+  // define important variables and constants
+  vector<int> id_closest = {-1, -1};
+  const int lane_num = car_d / 4;
+  const vector<int> d_bound = {4 * lane_num, 4 * lane_num + 4};
+  vector<double> dist_closest = {std::numeric_limits<double>::max(), std::numeric_limits<double>::max()};
+
+  // find closest front and back vehicle in same lane
+  for(int i = 0; i < sensor_fusion.size(); ++i) {
+    bool is_same_lane = sensor_fusion[i][6] >= d_bound[0] && sensor_fusion[i][6] <= d_bound[1];
+    if(!is_same_lane)
+      continue;
+    bool is_behind = x_local[i] < 0;
+    double dist = distance(car_x, car_y, sensor_fusion[i][1], sensor_fusion[i][2]);
+    if(is_behind && dist < dist_closest[0]) {
+      dist_closest[0] = dist;
+      id_closest[0] = sensor_fusion[i][0];
+    }
+    else if(!is_behind && dist < dist_closest[1]) {
+      dist_closest[1] = dist;
+      id_closest[1] = sensor_fusion[i][0];
+    }
+  }
+  return id_closest;
+}
+
 int main() {
   uWS::Hub h;
 
@@ -303,21 +342,15 @@ int main() {
 
             // Sensor Fusion Data, a list of all other cars on the same side of the road.
             vector< vector<double> >  sensor_fusion = j[1]["sensor_fusion"];
-            double id_closest = -1;
-            double s_closest = max_s + 1;
-            double near_end = car_s > max_s - 100;
-            for(vector<double> &v : sensor_fusion) {
-              bool in_front = near_end && v[5] < 100 ? v[5] + max_s > car_s : v[5] > car_s;
-              int lane_num = (int)car_d / 4;
-              bool same_lane = v[6] >= 4 * lane_num && v[6] <= 4 * lane_num + 4;
-              bool is_closest = v[5] < s_closest;
-              if(in_front && same_lane && is_closest) {
-                id_closest = v[0];
-                s_closest = v[5];
-              } 
-            }
 
             json msgJson;
+
+            // find closest car in front in same lane
+            vector<int> id_closest = closestVehicles(sensor_fusion, car_x, car_y, degToRad(car_yaw), car_d);
+            int id_closest_front = id_closest[1];
+            print(id_closest[0]);
+            print(id_closest_front);
+            print();
 
             vector<double> ptsx, ptsy;
 
@@ -380,9 +413,9 @@ int main() {
             for(int i = prev_size, j = 0; i < num_waypoints; ++i) {
               bool going_slower = false;
               bool too_close = false;
-              if(id_closest != -1) {
-                going_slower = sqrt(pow(sensor_fusion[id_closest][3], 2) + pow(sensor_fusion[id_closest][4], 2)) < ref_vel;
-                too_close = distance(next_x_vals.back(), next_y_vals.back(), sensor_fusion[id_closest][1], sensor_fusion[id_closest][2]) < 10;
+              if(id_closest_front != -1) {
+                going_slower = sqrt(pow(sensor_fusion[id_closest_front][3], 2) + pow(sensor_fusion[id_closest_front][4], 2)) < ref_vel;
+                too_close = distance(next_x_vals.back(), next_y_vals.back(), sensor_fusion[id_closest_front][1], sensor_fusion[id_closest_front][2]) < 10;
               }
               bool slow_down = going_slower && too_close;
 
