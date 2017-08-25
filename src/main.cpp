@@ -226,7 +226,7 @@ int LaneToD(const char &lane) {
 }
 
 // uses sensor fusion data to find the closest front and back vehicles for current lane
-vector<int> closestVehicles(const vector< vector<double> > &sensor_fusion, const double &car_x, const double &car_y, const double &car_yaw, const double &car_d) {
+vector<int> findCloseVehiclesInLane(const vector< vector<double> > &sensor_fusion, const double &car_x, const double &car_y, const double &car_yaw, const double &car_d) {
   // get x, y points
   vector<double> x, y;
   for(const vector<double> &v : sensor_fusion) {
@@ -262,6 +262,15 @@ vector<int> closestVehicles(const vector< vector<double> > &sensor_fusion, const
     }
   }
   return id_closest;
+}
+
+vector< vector<int> > findCloseVehicles(const vector< vector<double> > &sensor_fusion, const double &car_x, const double &car_y, const double &car_yaw) {
+  vector< vector<int> > res(3);
+  for(int i = 0, d = 2; i < 3; ++i, d += 4) {
+    const vector<int> frontAndBack = findCloseVehiclesInLane(sensor_fusion, car_x, car_y, car_yaw, d);
+    res[i] = frontAndBack;
+  }
+  return res;
 }
 
 int main() {
@@ -346,10 +355,10 @@ int main() {
             json msgJson;
 
             // find closest car in front in same lane
-            vector<int> id_closest = closestVehicles(sensor_fusion, car_x, car_y, degToRad(car_yaw), car_d);
+            vector< vector<int> > close_vehicles = findCloseVehicles(sensor_fusion, car_x, car_y, degToRad(car_yaw));
+            vector<int> id_closest = close_vehicles[1];
             int id_closest_front = id_closest[1];
-            print(id_closest[0]);
-            print(id_closest_front);
+            print(close_vehicles);
             print();
 
             vector<double> ptsx, ptsy;
