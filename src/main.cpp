@@ -24,8 +24,11 @@ const unsigned int num_spline_points = 5;
 const unsigned int spline_point_dist = 30;
 const unsigned int num_waypoints = 50;
 const double dist_inc = 0.3;
-const int lane = 1;
+
 const double speed_limit = 50;
+const double speed_limit_buffer = 0.3;
+// distance to keep between vehicles
+const double safety_gap = 10;
 
 // For converting back and forth between radians and degrees.
 constexpr double pi() { return M_PI; }
@@ -45,6 +48,16 @@ string hasData(string s) {
     return s.substr(b1, b2 - b1 + 2);
   }
   return "";
+}
+
+double speed(const double &vx, const double &vy) {
+  return sqrt(pow(vx, 2) + pow(vy, 2));
+}
+
+double speed(const vector< vector<double> > &sensor_fusion, const int &id) {
+  const int vx = sensor_fusion[id][3];
+  const int vy = sensor_fusion[id][4];
+  return sqrt(pow(vx, 2) + pow(vy, 2));
 }
 
 double distance(const double &x1, const double &y1, const double &x2, const double &y2) {
@@ -210,19 +223,16 @@ double mphToDistInc(const double &mph) {
   return 8.94077777777777e-3 * mph;
 }
 
+double max(const double &a, const double &b) {
+  return a > b ? a : b;
+}
+
 double min(const double &a, const double &b) {
   return a < b ? a : b;
 }
 
-// converts Lane to d Frenet coordinate
-int LaneToD(const char &lane) {
-  if(lane == 'l')
-    return 2;
-  if(lane == 'm')
-    return 6;
-  if(lane == 'r')
-    return 10;
-  return -1;
+int dToLane(const double d) {
+  return d / 4;
 }
 
 // uses sensor fusion data to find the closest front and back vehicles for current lane
@@ -239,11 +249,11 @@ vector<int> findCloseVehiclesInLane(const vector< vector<double> > &sensor_fusio
   vector<double> x_local = xy_local[0];
   vector<double> y_local = xy_local[1];
 
-  // define important variables and constants
+  // define variables and constants
   vector<int> id_closest = {-1, -1};
+  vector<double> dist_closest = {std::numeric_limits<double>::max(), std::numeric_limits<double>::max()};
   const int lane_num = car_d / 4;
   const vector<int> d_bound = {4 * lane_num, 4 * lane_num + 4};
-  vector<double> dist_closest = {std::numeric_limits<double>::max(), std::numeric_limits<double>::max()};
 
   // find closest front and back vehicle in same lane
   for(int i = 0; i < sensor_fusion.size(); ++i) {
@@ -311,9 +321,10 @@ int main() {
     map_waypoints_dy.push_back(d_y);
   }
 
+  double lane = 1;
   double ref_vel = 0;
 
-  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy,&yaw_end,&max_s,&ref_vel](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy,&yaw_end,&max_s,&ref_vel,&lane](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -338,9 +349,8 @@ int main() {
             double car_s = j[1]["s"];
             double car_d = j[1]["d"];
             double car_yaw = j[1]["yaw"];
+            double car_yaw_rad = degToRad(car_yaw);
             double car_speed = j[1]["speed"];
-
-            print(car_s);
 
             // Previous path data given to the Planner
             vector<double> previous_path_x = j[1]["previous_path_x"];
@@ -354,18 +364,21 @@ int main() {
 
             json msgJson;
 
-            // find closest car in front in same lane
-            vector< vector<int> > close_vehicles = findCloseVehicles(sensor_fusion, car_x, car_y, degToRad(car_yaw));
-            vector<int> id_closest = close_vehicles[1];
-            int id_closest_front = id_closest[1];
-            print(close_vehicles);
-            print();
+            // find closest vehicles to ego
+            vector< vector<int> > close_vehicles = findCloseVehicles(sensor_fusion, car_x, car_y, car_yaw_rad);
+            int id_closest_front = close_vehicles[lane][1];
+            bool can_go_right = lane != 2;
+            bool close = false;
+            if(id_closest_front != -1)
+              close = distance(car_x, car_y, sensor_fusion[id_closest_front][1], sensor_fusion[id_closest_front][2]) < safety_gap + 0.1;
+            bool lane_change = can_go_right && close;
+
 
             vector<double> ptsx, ptsy;
 
             double ref_x = car_x;
             double ref_y = car_y;
-            double ref_yaw = degToRad(car_yaw);
+            double ref_yaw = car_yaw_rad;
 
             int prev_size = previous_path_x.size();
             if(prev_size < 2) {
@@ -399,6 +412,7 @@ int main() {
 
             // create points for spline
             for(int i = ptsx.size(), j = 1; i < num_spline_points; ++i, ++j) {
+              print(lane);
               vector<double> next_wp = getXY(car_s + j * spline_point_dist, 2 + 4 * lane, map_waypoints_s, map_waypoints_x, map_waypoints_y);
               ptsx.push_back(next_wp[0]);
               ptsy.push_back(next_wp[1]);
@@ -418,17 +432,26 @@ int main() {
             vector<double> next_y_vals(previous_path_y);
 
             // sample spline
+            bool flag = false;
             double x_add_on = 0;
             for(int i = prev_size, j = 0; i < num_waypoints; ++i) {
+
               bool going_slower = false;
               bool too_close = false;
               if(id_closest_front != -1) {
-                going_slower = sqrt(pow(sensor_fusion[id_closest_front][3], 2) + pow(sensor_fusion[id_closest_front][4], 2)) < ref_vel;
-                too_close = distance(next_x_vals.back(), next_y_vals.back(), sensor_fusion[id_closest_front][1], sensor_fusion[id_closest_front][2]) < 10;
+                going_slower = speed(sensor_fusion, id_closest_front) < ref_vel;
+                too_close = distance(next_x_vals.back(), next_y_vals.back(), sensor_fusion[id_closest_front][1], sensor_fusion[id_closest_front][2]) < safety_gap;
               }
               bool slow_down = going_slower && too_close;
+              //if(slow_down && lane != 2 && !flag) {
+              if(slow_down && !flag) {
+                lane += 0.01;
+                flag = true;
+              }
 
-              ref_vel = slow_down ? ref_vel - 0.4 : min(ref_vel + 0.4, speed_limit - 0.3);
+              double speed_limit_tmp = slow_down ? speed(sensor_fusion, id_closest_front) : speed_limit;
+
+              ref_vel = slow_down ? max(ref_vel - 0.4, speed_limit_tmp) : min(ref_vel + 0.4, speed_limit_tmp - speed_limit_buffer);
               double x_point = x_add_on + mphToDistInc(ref_vel);
               double y_point = s(x_point);
 
@@ -456,6 +479,7 @@ int main() {
             // define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
             msgJson["next_x"] = next_x_vals;
             msgJson["next_y"] = next_y_vals;
+            // cycle += 1;
 
             auto msg = "42[\"control\","+ msgJson.dump()+"]";
 
