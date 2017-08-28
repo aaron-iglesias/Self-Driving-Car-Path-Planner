@@ -1,21 +1,24 @@
 #ifndef ROAD_H
 #define ROAD_H
 
-#include "State.h"
+#include <string>
 #include <unordered_map>
-#include "Vehicle.h"
+#include <vector>
+
+using namespace std;
 
 class Road {
 private:
-	std::unordered_map<int, State> vehicles_;
+	// TODO: make max_s_ constant
+	double max_s_;
+	double speed_limit_;
+	unordered_map< string, vector<double> > waypoints_;
 public:
-	Road();
-	Road(const std::unordered_map<int, State> vehicles);
+	Road(double max_s, double speed_limit, vector<double> waypoints_x, vector<double> waypoints_y, vector<double> waypoints_s, vector<double> waypoints_dx, vector<double> waypoints_dy);
 
-	std::unordered_map<int, State> getVehicles() const;
-
-	void add(const Vehicle v);
-	void remove(const Vehicle v);
+	double getMaxS() const;
+	double getSpeedLimit() const;
+	unordered_map< string, vector<double> > getWaypoints() const;
 };
 
 #endif

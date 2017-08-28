@@ -1,21 +1,20 @@
 #include "Road.h"
 
-Road::Road() {}
-
-Road::Road(const std::unordered_map<int, State> vehicles) {
-	vehicles_ = vehicles;
+// TODO: assert waypoints.size() are all same
+Road::Road(double max_s, double speed_limit, vector<double> waypoints_x, vector<double> waypoints_y, vector<double> waypoints_s, vector<double> waypoints_dx, vector<double> waypoints_dy) {
+	max_s_ = max_s;
+	speed_limit_ = speed_limit;
+	waypoints_["x"] = waypoints_x;
+	waypoints_["y"] = waypoints_y;
+	waypoints_["s"] = waypoints_s;
+	waypoints_["dx"] = waypoints_dx;
+	waypoints_["dy"] = waypoints_dy;
 }
 
-std::unordered_map<int, State> Road::getVehicles() const {
-	return vehicles_;
+double Road::getMaxS() const {
+	return max_s_;
 }
 
-void Road::add(const Vehicle v) {
-	vehicles_[v.id] = v.getState();
-}
-
-void Road::remove(const Vehicle v) {
-	auto it = vehicles_.begin();
-	if(it != vehicles_.end())
-		vehicles_.erase(it);
+unordered_map< string, vector<double> > Road::getWaypoints() const {
+	return waypoints_;
 }
