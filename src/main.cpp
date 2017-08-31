@@ -22,13 +22,16 @@ using json = nlohmann::json;
 const unsigned int d = 6;
 const unsigned int num_spline_points = 5;
 const unsigned int spline_point_dist = 30;
-const unsigned int num_waypoints = 50;
+const unsigned int num_waypoints = 25;
 const double dist_inc = 0.3;
 
 const double speed_limit = 50;
-const double speed_limit_buffer = 0.3;
+const double speed_limit_buffer = 0.15;
 // distance to keep between vehicles
-const double safety_gap = 10;
+const double safety_gap = 35;
+
+const double lane_inc = 0.02;
+const double count_inc = 100 * lane_inc;
 
 // For converting back and forth between radians and degrees.
 constexpr double pi() { return M_PI; }
@@ -50,6 +53,10 @@ string hasData(string s) {
   return "";
 }
 
+bool isInt(const double &n) {
+  return floor(n) == n;
+}
+
 double speed(const double &vx, const double &vy) {
   return sqrt(pow(vx, 2) + pow(vy, 2));
 }
@@ -63,6 +70,19 @@ double speed(const vector< vector<double> > &sensor_fusion, const int &id) {
 double distance(const double &x1, const double &y1, const double &x2, const double &y2) {
   return sqrt(pow(x2 - x1, 2) + pow(y2 - y1, 2));
 }
+
+
+double sDistance(double a, double b, const double max_s = 6945.554) {
+  double res = abs(a - b);
+  if(res > max_s / 2) {
+    if(a >= 0)
+      a += max_s;
+    else
+      b += max_s;
+    res = abs(a - b);
+  }
+  return res;
+} 
 
 int ClosestWaypoint(const double &x, const double &y, const vector<double> &maps_x, const vector<double> &maps_y)
 {
@@ -297,7 +317,6 @@ int main() {
   string map_file_ = "../data/highway_map.csv";
   // The max s value before wrapping around the track back to 0
   double max_s = 6945.554;
-  double yaw_end = 1;
 
   ifstream in_map_(map_file_.c_str(), ifstream::in);
 
@@ -321,10 +340,12 @@ int main() {
     map_waypoints_dy.push_back(d_y);
   }
 
+  double count = 0;
   double lane = 1;
   double ref_vel = 0;
+  vector<bool> lane_change = {false, false};
 
-  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy,&yaw_end,&max_s,&ref_vel,&lane](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy,&max_s,&ref_vel,&lane,&lane_change,&count](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -366,13 +387,78 @@ int main() {
 
             // find closest vehicles to ego
             vector< vector<int> > close_vehicles = findCloseVehicles(sensor_fusion, car_x, car_y, car_yaw_rad);
-            int id_closest_front = close_vehicles[lane][1];
-            bool can_go_right = lane != 2;
-            bool close = false;
-            if(id_closest_front != -1)
-              close = distance(car_x, car_y, sensor_fusion[id_closest_front][1], sensor_fusion[id_closest_front][2]) < safety_gap + 0.1;
-            bool lane_change = can_go_right && close;
 
+            int id_front = close_vehicles[(int)round(lane)][1];
+
+            // consider lane change
+            double distance_to_front = id_front == -1 ? std::numeric_limits<double>::max() : distance(car_x, car_y, sensor_fusion[id_front][1], sensor_fusion[id_front][2]);
+            bool too_close_to_front_vehicle = id_front != -1 && distance_to_front < safety_gap;
+            print(ref_vel);
+            if(id_front == -1)
+              print(-1);
+            else
+              print(speed(sensor_fusion, id_front));
+            print(lane);
+            print();
+            if(count == 0 || abs(count - 100) < 0.01) {
+              count = 0;
+              lane_change = {false, false};
+              lane = round(lane);
+              if(too_close_to_front_vehicle) {
+                int id_front_left = -1, id_front_right = -1;
+                int id_back_left = -1, id_back_right = -1;
+                if(lane != 0) {
+                  id_back_left = close_vehicles[lane - 1][0];
+                  id_front_left = close_vehicles[lane - 1][1];
+                }
+                if(lane != 2) {
+                  id_back_right = close_vehicles[lane + 1][0];
+                  id_front_right = close_vehicles[lane + 1][1];
+                }
+                // check if left lane change is feasible
+                bool lane_change_left_condition1 = id_front_left == -1 || sDistance(car_s, sensor_fusion[id_front_left][5]) > safety_gap / 2 || (speed(sensor_fusion, id_front_left) > ref_vel && sDistance(car_s, sensor_fusion[id_front_left][5]) > safety_gap / 4);
+                bool lane_change_left_condition2 = id_back_left == -1 || sDistance(car_s, sensor_fusion[id_back_left][5]) > safety_gap / 2 || (speed(sensor_fusion, id_back_left) < ref_vel && sDistance(car_s, sensor_fusion[id_back_left][5]) > safety_gap / 6);
+                lane_change[0] = lane != 0 && lane_change_left_condition1 && lane_change_left_condition2;
+
+                // check if right lane change is feasible
+                bool lane_change_right_condition1 = id_front_right == -1 || sDistance(car_s, sensor_fusion[id_front_right][5]) > safety_gap / 2 || (speed(sensor_fusion, id_front_right) > ref_vel && sDistance(car_s, sensor_fusion[id_front_right][5]) > safety_gap / 4);
+                bool lane_change_right_condition2 = id_back_right == -1 || sDistance(car_s, sensor_fusion[id_back_right][5]) > safety_gap / 2 || (speed(sensor_fusion, id_back_right) < ref_vel && sDistance(car_s, sensor_fusion[id_back_right][5]) > safety_gap / 6);
+                lane_change[1] = lane != 2 && lane_change_right_condition1 && lane_change_right_condition2;
+
+                // if both lane changes are fasible, choose faster lane
+                if(lane_change[0] && lane_change[1]) {
+                  if(id_front_left == -1) 
+                    lane_change[1] = false;
+                  else if(id_front_right == -1) 
+                    lane_change[0] = false;
+                  double s_distance_left = sDistance(car_s, sensor_fusion[id_front_left][5]);
+                  double s_distance_right = sDistance(car_s, sensor_fusion[id_front_right][5]);
+
+                  if(sDistance(car_s, sensor_fusion[id_front_left][5]) > safety_gap / 2)
+                    lane_change[1] = false;
+                  else if(sDistance(car_s, sensor_fusion[id_front_right][5]) > safety_gap / 2)
+                    lane_change[0] = false;
+                  else if(speed(sensor_fusion, id_front_left) > speed(sensor_fusion, id_front_right)) {
+                    lane_change[1] = false;
+                  }
+                  else {
+                    lane_change[0] = false;
+                  }
+                }
+              }
+            }
+            if(lane_change[1]) {
+              count += count_inc;
+              lane += lane_inc;
+            }
+            else if(lane_change[0]) {
+              count += count_inc;
+              lane -= lane_inc;
+            }
+            if(abs(count - 100) < 0.01)
+              lane = round(lane);
+
+            ref_vel = distance_to_front < safety_gap / 2 ? max(ref_vel - 0.3, speed(sensor_fusion, id_front)) : min(ref_vel + 0.4, speed_limit - speed_limit_buffer);
 
             vector<double> ptsx, ptsy;
 
@@ -412,7 +498,6 @@ int main() {
 
             // create points for spline
             for(int i = ptsx.size(), j = 1; i < num_spline_points; ++i, ++j) {
-              print(lane);
               vector<double> next_wp = getXY(car_s + j * spline_point_dist, 2 + 4 * lane, map_waypoints_s, map_waypoints_x, map_waypoints_y);
               ptsx.push_back(next_wp[0]);
               ptsy.push_back(next_wp[1]);
@@ -436,22 +521,6 @@ int main() {
             double x_add_on = 0;
             for(int i = prev_size, j = 0; i < num_waypoints; ++i) {
 
-              bool going_slower = false;
-              bool too_close = false;
-              if(id_closest_front != -1) {
-                going_slower = speed(sensor_fusion, id_closest_front) < ref_vel;
-                too_close = distance(next_x_vals.back(), next_y_vals.back(), sensor_fusion[id_closest_front][1], sensor_fusion[id_closest_front][2]) < safety_gap;
-              }
-              bool slow_down = going_slower && too_close;
-              //if(slow_down && lane != 2 && !flag) {
-              if(slow_down && !flag) {
-                lane += 0.01;
-                flag = true;
-              }
-
-              double speed_limit_tmp = slow_down ? speed(sensor_fusion, id_closest_front) : speed_limit;
-
-              ref_vel = slow_down ? max(ref_vel - 0.4, speed_limit_tmp) : min(ref_vel + 0.4, speed_limit_tmp - speed_limit_buffer);
               double x_point = x_add_on + mphToDistInc(ref_vel);
               double y_point = s(x_point);
 
@@ -470,11 +539,6 @@ int main() {
               next_x_vals.push_back(x_point);
               next_y_vals.push_back(y_point);
             }
-
-            // convert local to global coordinates
-            // vector< vector<double> > pts_global = localToGlobal(next_x_vals, next_y_vals, ref_x, ref_y, ref_yaw);
-            // next_x_vals = pts_global[0];
-            // next_y_vals = pts_global[1];
 
             // define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
             msgJson["next_x"] = next_x_vals;
