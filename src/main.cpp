@@ -25,12 +25,12 @@ const unsigned int spline_point_dist = 30;
 const unsigned int num_waypoints = 25;
 const double dist_inc = 0.3;
 
-const double speed_limit = 50;
+const double speed_limit = 49.85;
 const double speed_limit_buffer = 0.15;
 // distance to keep between vehicles
 const double safety_gap = 35;
 
-const double lane_inc = 0.02;
+const double lane_inc = 0.01;
 const double count_inc = 100 * lane_inc;
 
 // For converting back and forth between radians and degrees.
@@ -247,6 +247,11 @@ double max(const double &a, const double &b) {
   return a > b ? a : b;
 }
 
+double max(const double &a, const double &b, const double &c) {
+  double res = max(a, b);
+  return max(res, c);
+}
+
 double min(const double &a, const double &b) {
   return a < b ? a : b;
 }
@@ -340,12 +345,15 @@ int main() {
     map_waypoints_dy.push_back(d_y);
   }
 
-  double count = 0;
   double lane = 1;
   double ref_vel = 0;
-  vector<bool> lane_change = {false, false};
+  vector<bool> lane_change = {false, false};  
+  double speed_limit_tmp = speed_limit;
+  bool sl_flag = false;
 
-  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy,&max_s,&ref_vel,&lane,&lane_change,&count](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  unsigned int cycle = 0;
+
+  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy,&max_s,&ref_vel,&lane,&lane_change,&cycle,&speed_limit_tmp, &sl_flag](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -363,7 +371,7 @@ int main() {
         
         if (event == "telemetry") {
           // j[1] is the data JSON object
-          
+          cycle = (cycle + 1) % 100;
           // Main car's localization Data
             double car_x = j[1]["x"];
             double car_y = j[1]["y"];
@@ -387,78 +395,103 @@ int main() {
 
             // find closest vehicles to ego
             vector< vector<int> > close_vehicles = findCloseVehicles(sensor_fusion, car_x, car_y, car_yaw_rad);
+            int front = close_vehicles[round(lane)][1];
+            int front_left = -1, front_right = -1;
+            int front_left_left = -1, front_right_right = -1;
+            int back_left = -1, back_right = -1;
+            int back_left_left = -1, back_right_right = -1;
+            if(round(lane) != 0)
+              front_left = close_vehicles[round(lane - 1)][1], back_left = close_vehicles[round(lane - 1)][0];
+            else {
+              front_right_right = close_vehicles[round(lane + 2)][1], back_right_right = close_vehicles[round(lane + 2)][0];
+            }
+            if(round(lane) != 2)
+              front_right = close_vehicles[round(lane + 1)][1], back_right = close_vehicles[round(lane + 1)][0];
+            else {
+              front_left_left = close_vehicles[round(lane - 2)][1], back_left_left = close_vehicles[round(lane - 2)][0];
+            }
 
-            int id_front = close_vehicles[(int)round(lane)][1];
+            // ***** START *****
 
             // consider lane change
-            double distance_to_front = id_front == -1 ? std::numeric_limits<double>::max() : distance(car_x, car_y, sensor_fusion[id_front][1], sensor_fusion[id_front][2]);
-            bool too_close_to_front_vehicle = id_front != -1 && distance_to_front < safety_gap;
-            print(ref_vel);
-            if(id_front == -1)
-              print(-1);
-            else
-              print(speed(sensor_fusion, id_front));
-            print(lane);
-            print();
-            if(count == 0 || abs(count - 100) < 0.01) {
-              count = 0;
+            if(abs(lane - round(lane)) < 0.01) {
+              speed_limit_tmp = speed_limit;
+              sl_flag = false;
               lane_change = {false, false};
               lane = round(lane);
-              if(too_close_to_front_vehicle) {
-                int id_front_left = -1, id_front_right = -1;
-                int id_back_left = -1, id_back_right = -1;
-                if(lane != 0) {
-                  id_back_left = close_vehicles[lane - 1][0];
-                  id_front_left = close_vehicles[lane - 1][1];
-                }
-                if(lane != 2) {
-                  id_back_right = close_vehicles[lane + 1][0];
-                  id_front_right = close_vehicles[lane + 1][1];
-                }
-                // check if left lane change is feasible
-                bool lane_change_left_condition1 = id_front_left == -1 || sDistance(car_s, sensor_fusion[id_front_left][5]) > safety_gap / 2 || (speed(sensor_fusion, id_front_left) > ref_vel && sDistance(car_s, sensor_fusion[id_front_left][5]) > safety_gap / 4);
-                bool lane_change_left_condition2 = id_back_left == -1 || sDistance(car_s, sensor_fusion[id_back_left][5]) > safety_gap / 2 || (speed(sensor_fusion, id_back_left) < ref_vel && sDistance(car_s, sensor_fusion[id_back_left][5]) > safety_gap / 6);
-                lane_change[0] = lane != 0 && lane_change_left_condition1 && lane_change_left_condition2;
+              if(front != -1) {
+                bool front_left_safe  = front_left == -1  || sDistance(car_s, sensor_fusion[front_left][5]) > safety_gap / 2  || (speed(sensor_fusion, front_left) > ref_vel  && sDistance(car_s, sensor_fusion[front_left][5]) > safety_gap / 4);
+                bool front_right_safe = front_right == -1 || sDistance(car_s, sensor_fusion[front_right][5]) > safety_gap / 2 || (speed(sensor_fusion, front_right) > ref_vel && sDistance(car_s, sensor_fusion[front_right][5]) > safety_gap / 4);
+                bool back_left_safe   = back_left == -1   || sDistance(car_s, sensor_fusion[back_left][5]) > safety_gap / 2   || (speed(sensor_fusion, back_left) < ref_vel   && sDistance(car_s, sensor_fusion[back_left][5]) > safety_gap / 6);
+                bool back_right_safe  = back_right == -1  || sDistance(car_s, sensor_fusion[back_right][5]) > safety_gap / 2  || (speed(sensor_fusion, back_right) < ref_vel  && sDistance(car_s, sensor_fusion[back_right][5]) > safety_gap / 6);
 
-                // check if right lane change is feasible
-                bool lane_change_right_condition1 = id_front_right == -1 || sDistance(car_s, sensor_fusion[id_front_right][5]) > safety_gap / 2 || (speed(sensor_fusion, id_front_right) > ref_vel && sDistance(car_s, sensor_fusion[id_front_right][5]) > safety_gap / 4);
-                bool lane_change_right_condition2 = id_back_right == -1 || sDistance(car_s, sensor_fusion[id_back_right][5]) > safety_gap / 2 || (speed(sensor_fusion, id_back_right) < ref_vel && sDistance(car_s, sensor_fusion[id_back_right][5]) > safety_gap / 6);
-                lane_change[1] = lane != 2 && lane_change_right_condition1 && lane_change_right_condition2;
-
-                // if both lane changes are fasible, choose faster lane
-                if(lane_change[0] && lane_change[1]) {
-                  if(id_front_left == -1) 
-                    lane_change[1] = false;
-                  else if(id_front_right == -1) 
-                    lane_change[0] = false;
-                  double s_distance_left = sDistance(car_s, sensor_fusion[id_front_left][5]);
-                  double s_distance_right = sDistance(car_s, sensor_fusion[id_front_right][5]);
-
-                  if(sDistance(car_s, sensor_fusion[id_front_left][5]) > safety_gap / 2)
-                    lane_change[1] = false;
-                  else if(sDistance(car_s, sensor_fusion[id_front_right][5]) > safety_gap / 2)
-                    lane_change[0] = false;
-                  else if(speed(sensor_fusion, id_front_left) > speed(sensor_fusion, id_front_right)) {
-                    lane_change[1] = false;
+                // if non-existent
+                if(lane != 0 && front_left == -1 && back_left_safe)
+                  lane_change[0] = true;
+                else if(lane != 2 && front_right == -1 && back_right_safe)
+                  lane_change[1] = true;
+                if(!lane_change[0] && !lane_change[1]) {
+                  // choose lane of furthest vehicle
+                  double front_dist = sDistance(sensor_fusion[front][5], car_s);
+                  double front_left_dist = front_left == -1 ? -1 : sDistance(sensor_fusion[front_left][5], car_s);
+                  double front_right_dist = front_right == -1 ? -1 : sDistance(sensor_fusion[front_right][5], car_s);
+                  double max_dist = max(front_dist, front_left_dist, front_right_dist);
+                  int max_dist_id = front;
+                  if(front_left_dist == max_dist)
+                    max_dist_id = front_left;
+                  else if(front_right_dist == max_dist)
+                    max_dist_id = front_right;
+                  if(lane == 1) {
+                    if(max_dist_id == front_left && front_left_safe && back_left_safe)
+                      lane_change[0] = true;
+                    else if(max_dist_id == front_right && front_right_safe && back_right_safe)
+                      lane_change[1] = true;
                   }
-                  else {
-                    lane_change[0] = false;
+                  else if(lane == 0) {
+                    double front_right_right_dist = front_right_right == -1 ? -1 : sDistance(sensor_fusion[front_right_right][5], car_s);
+                    if(front_right_right_dist > max_dist) {
+                      front_right_right_dist = max_dist;
+                      max_dist_id = front_right_right;
+                    }
+                    if((max_dist_id == front_right || (max_dist_id == front_right_right)) && front_right_safe && back_right_safe)
+                      lane_change[1] = true;
+                  }
+                  else if(lane == 2) {
+                    double front_left_left_dist = front_left_left == -1 ? -1 : sDistance(sensor_fusion[front_left_left][5], car_s);
+                    if(front_left_left_dist > max_dist) {
+                      front_left_left_dist = max_dist;
+                      max_dist_id = front_left_left;
+                    }
+                    if((max_dist_id == front_left || (max_dist_id == front_left_left)) && front_right_safe && back_left_safe)
+                      lane_change[0] = true;
                   }
                 }
               }
             }
-            if(lane_change[1]) {
-              count += count_inc;
+
+            // update lane value
+            if(lane_change[1]) 
               lane += lane_inc;
-            }
-            else if(lane_change[0]) {
-              count += count_inc;
+            else if(lane_change[0]) 
               lane -= lane_inc;
-            }
-            if(abs(count - 100) < 0.01)
+            if(abs(lane - round(lane)) < 0.01)
               lane = round(lane);
 
-            ref_vel = distance_to_front < safety_gap / 2 ? max(ref_vel - 0.3, speed(sensor_fusion, id_front)) : min(ref_vel + 0.4, speed_limit - speed_limit_buffer);
+            // ***** END *****
+            if(front != -1 && sDistance(sensor_fusion[front][5], car_s) < safety_gap / 2) {
+              speed_limit_tmp = speed(sensor_fusion, front);
+              sl_flag = true;
+            }
+
+            if(ref_vel > speed_limit_tmp) {
+              ref_vel = max(ref_vel - 0.22, speed_limit_tmp);
+            }
+            else if(!sl_flag) {
+              ref_vel = min(ref_vel + 0.4, speed_limit_tmp);
+            }
+            print(speed_limit_tmp);
+            print(ref_vel);
+            print();
 
             vector<double> ptsx, ptsy;
 
